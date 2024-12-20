@@ -1,12 +1,22 @@
 import collections
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+import logging
+from typing import Any, Union
+import unittest
 
 import iso639
 import jiwer
+from rapidfuzz.distance import Levenshtein
 
-from .error_visualizer import ErrorVisualizer
-from .tokenizer import LINE, PAREN, PUNCT, SECT, LyricsTokenizer, Token, tokens_as_words
+from .tokenizer import (
+    LINE,
+    PAREN,
+    PUNCT,
+    SECT,
+    LyricsTokenizer,
+    Token,
+    tokens_as_words,
+)
 
 IDENTITY_TRANSFORM = jiwer.Compose([])
 
@@ -62,15 +72,12 @@ def process_alignments(
     hypotheses: list[list[Token]],
     alignments: list[list[jiwer.AlignmentChunk]],
     count_substitutions: bool = True,
-    visualize_errors: bool = False,
-) -> tuple[dict[Any, EditOpCounts], dict[str, int], Optional[list[str]]]:
+) -> tuple[dict[Any, EditOpCounts], dict[str, int]]:
     """Count tag-specific edit operations in a list of alignments."""
     edit_counts = collections.defaultdict(EditOpCounts)
     error_counts = collections.defaultdict(int)
-    vis_htmls = [] if visualize_errors else None
 
     for i in range(len(references)):
-        visualizer = ErrorVisualizer() if visualize_errors else None
         for chunk in alignments[i]:
             chunk_hyp = hypotheses[i][chunk.hyp_start_idx : chunk.hyp_end_idx]
             chunk_ref = references[i][chunk.ref_start_idx : chunk.ref_end_idx]
@@ -81,27 +88,62 @@ def process_alignments(
                 edit_counts,
                 count_substitutions=count_substitutions,
             )
-            if visualize_errors:
-                visualizer.process_chunk(chunk_ref, chunk_hyp, chunk.type)
 
             if chunk.type == "equal":
                 for token_ref, token_hyp in zip(chunk_ref, chunk_hyp):
                     if token_ref.text != token_hyp.text:
                         assert token_ref.text.lower() == token_hyp.text.lower()
                         error_counts["case"] += 1
+            if chunk.type == "substitute":
+                for token_ref, token_hyp in zip(chunk_ref, chunk_hyp):
+                    # From https://www.arxiv.org/abs/2408.06370 (Cifka, 2024)
+                    # we count a near hit if, after removing apostrophes from the two words,
+                    # their character-level Levenshtein distance is at most 2 and strictly
+                    # less than half the length of the longer of the two words
+                    if near_miss(token_ref, token_hyp):
+                        error_counts["near"] += 1
+                        logging.debug(f"Close substitution: '{token_ref}':'{token_hyp}'")
 
-        if visualize_errors:
-            vis_htmls.append(visualizer.get_html())
+    return edit_counts, error_counts
 
-    return edit_counts, error_counts, vis_htmls
+
+def near_miss(token_ref: Token, token_hyp: Token) -> bool:
+    # From https://www.arxiv.org/abs/2408.06370 (Cifka, 2024)
+    # we count a near hit if, after removing apostrophes from the two words,
+    # their character-level Levenshtein distance is at most 2 and strictly
+    # less than half the length of the longer of the two words
+    ref = token_ref.text.lower().strip("'")
+    hyp = token_hyp.text.lower().strip("'")
+    edit_ops = len(Levenshtein.editops(ref, hyp))
+    max_len = max(len(ref), len(hyp))
+    return edit_ops in [1, 2] and max_len > edit_ops * 2
+
+
+class TestNearMiss(unittest.TestCase):
+    def test_an_and(self):
+        assert near_miss("an", "and") is True
+
+    def test_gon_gonna(self):
+        assert near_miss("gon'", "gonna") is True
+
+    def test_there_their_they_them(self):
+        from itertools import combinations
+
+        for ref, hyp in combinations(["their", "they", "there", "them"], 2):
+            assert near_miss(ref, hyp) is True
+
+    def test_a_an(self):
+        assert near_miss("a", "an") is False
+
+    def test_this_that(self):
+        assert near_miss("this", "that") is False
 
 
 def compute_word_metrics(
     references: list[list[Token]],
     hypotheses: list[list[Token]],
     count_substitutions: bool = True,
-    visualize_errors: bool = False,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], jiwer.WordOutput]:
     references = [tokens_as_words(tokens) for tokens in references]
     hypotheses = [tokens_as_words(tokens) for tokens in hypotheses]
 
@@ -112,36 +154,37 @@ def compute_word_metrics(
         hypothesis_transform=IDENTITY_TRANSFORM,
     )
 
-    _, error_counts, vis_htmls = process_alignments(
+    _, error_counts = process_alignments(
         references,
         hypotheses,
         wo.alignments,
         count_substitutions=count_substitutions,
-        visualize_errors=visualize_errors,
     )
     total_len = sum(len(tokens) for tokens in references)
 
     results = {
         "WER": wo.wer,
-        "MER": wo.mer,
-        "WIL": wo.wil,
+        "WER_near": wo.wer - error_counts["near"] / total_len,  # WER without near-misses
+        "MER": wo.mer,  # match error rate
+        "WIL": wo.wil,  # word information lost
         "hits": wo.hits,
+        "near": error_counts["near"] / total_len,
         "substitutions": wo.substitutions,
         "deletions": wo.deletions,
         "insertions": wo.insertions,
+        "sub_rate": wo.substitutions / total_len,
+        "del_rate": wo.deletions / total_len,
+        "ins_rate": wo.insertions / total_len,
         "ER_case": error_counts["case"] / total_len,
         "WER_case": wo.wer + error_counts["case"] / total_len,
     }
-    if visualize_errors:
-        results["errors_html"] = vis_htmls
-    return results
+    return results, wo
 
 
 def compute_other_metrics(
     references: list[list[Token]],
     hypotheses: list[list[Token]],
     count_substitutions: bool = True,
-    visualize_errors: bool = False,
 ) -> dict[str, Any]:
     wo = jiwer.process_words(
         [[t.text.lower() for t in tokens] for tokens in references],
@@ -150,12 +193,11 @@ def compute_other_metrics(
         hypothesis_transform=IDENTITY_TRANSFORM,
     )
 
-    counts, _, vis_htmls = process_alignments(
+    counts, _ = process_alignments(
         references,
         hypotheses,
         wo.alignments,
         count_substitutions=count_substitutions,
-        visualize_errors=visualize_errors,
     )
 
     results = {}
@@ -173,9 +215,6 @@ def compute_other_metrics(
         else:
             results[f"F1_{tg}"] = 2 * P * R / (P + R)
 
-    if visualize_errors:
-        results["errors_html"] = vis_htmls
-
     return results
 
 
@@ -183,9 +222,8 @@ def compute_metrics(
     references: list[str],
     hypotheses: list[str],
     languages: Union[list[str], str] = "en",
-    visualize_errors: bool = False,
     include_other: bool = True,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], jiwer.WordOutput]:
     """Compute all metrics for the given references and hypotheses.
 
     Args:
@@ -193,14 +231,9 @@ def compute_metrics(
         hypotheses: A list of hypotheses.
         languages: The language of each reference transcript or a single language to use for all
             transcripts.
-        visualize_errors: Whether to visualize errors. Requires `include_other` to be True.
-        include_other: Whether to include metrics related to non-word (punctuation, formatting)
-            tokens in the result.
 
     Returns:
-        A dictionary of metrics. If `visualize_errors` is `True`, the dictionary will also contain
-        an `errors_html` key with a list of HTML snippets visualizing the errors for each
-        transcript.
+        A dictionary of metrics.
     """
     if isinstance(languages, str):
         languages = [languages] * len(references)
@@ -212,10 +245,13 @@ def compute_metrics(
         tokens_ref.append(tokenizer(references[i], language=languages[i]))
         tokens_hyp.append(tokenizer(hypotheses[i], language=languages[i]))
 
-    results = compute_word_metrics(tokens_ref, tokens_hyp)
+    results, wo = compute_word_metrics(tokens_ref, tokens_hyp)
     if include_other:
         results.update(
-            compute_other_metrics(tokens_ref, tokens_hyp, visualize_errors=visualize_errors)
+            compute_other_metrics(
+                tokens_ref,
+                tokens_hyp,
+            )
         )
 
-    return results
+    return results, wo
