@@ -172,11 +172,13 @@ def compute_word_metrics(
         "substitutions": wo.substitutions,
         "deletions": wo.deletions,
         "insertions": wo.insertions,
+        "nears": error_counts["near"],
         "sub_rate": wo.substitutions / total_len,
         "del_rate": wo.deletions / total_len,
         "ins_rate": wo.insertions / total_len,
         "ER_case": error_counts["case"] / total_len,
         "WER_case": wo.wer + error_counts["case"] / total_len,
+        "total_len": total_len
     }
     return results, wo
 
