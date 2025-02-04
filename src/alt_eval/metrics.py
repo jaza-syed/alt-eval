@@ -13,6 +13,7 @@ from .tokenizer import (
     PAREN,
     PUNCT,
     SECT,
+    BACKING,
     LyricsTokenizer,
     Token,
     tokens_as_words,
@@ -38,7 +39,10 @@ def process_alignment_chunk(
     counts: dict[Any, EditOpCounts],
     count_substitutions: bool = True,
 ) -> None:
-    """Count tag-specific edit operations in a chunk of an alignment."""
+    """
+    Count tag-specific edit operations in a chunk of an alignment.
+    NOTE: counts is modified in place!
+    """
     if chunk_type == "delete":
         assert len(hypothesis) == 0
         for token in reference:
@@ -74,6 +78,7 @@ def process_alignments(
     count_substitutions: bool = True,
 ) -> tuple[dict[Any, EditOpCounts], dict[str, int]]:
     """Count tag-specific edit operations in a list of alignments."""
+    # dict tag->counter 
     edit_counts = collections.defaultdict(EditOpCounts)
     error_counts = collections.defaultdict(int)
 
@@ -96,13 +101,12 @@ def process_alignments(
                         error_counts["case"] += 1
             if chunk.type == "substitute":
                 for token_ref, token_hyp in zip(chunk_ref, chunk_hyp):
-                    # From https://www.arxiv.org/abs/2408.06370 (Cifka, 2024)
-                    # we count a near hit if, after removing apostrophes from the two words,
-                    # their character-level Levenshtein distance is at most 2 and strictly
-                    # less than half the length of the longer of the two words
                     if near_miss(token_ref, token_hyp):
                         error_counts["near"] += 1
-                        logging.debug(f"Close substitution: '{token_ref}':'{token_hyp}'")
+            if chunk.type == "delete":
+                for token_ref, _token_hyp in zip(chunk_ref, chunk_hyp):
+                    if BACKING in token_ref.tags:
+                        error_counts["del_backing"] += 1
 
     return edit_counts, error_counts
 
@@ -150,6 +154,7 @@ def compute_word_metrics(
     wo = jiwer.process_words(
         [[t.text.lower() for t in tokens] for tokens in references],
         [[t.text.lower() for t in tokens] for tokens in hypotheses],
+
         reference_transform=IDENTITY_TRANSFORM,
         hypothesis_transform=IDENTITY_TRANSFORM,
     )
@@ -178,7 +183,8 @@ def compute_word_metrics(
         "ins_rate": wo.insertions / total_len,
         "ER_case": error_counts["case"] / total_len,
         "WER_case": wo.wer + error_counts["case"] / total_len,
-        "total_len": total_len
+        "total_len": total_len,
+        "deletions_backing": error_counts["del_backing"] 
     }
     return results, wo
 
@@ -242,7 +248,8 @@ def compute_metrics(
     languages = [iso639.Language.match(lg).part1 for lg in languages]
 
     tokenizer = LyricsTokenizer()
-    tokens_ref, tokens_hyp = [], []
+    tokens_ref: list[list[Token]] = []
+    tokens_hyp: list[list[Token]] = []
     for i in range(len(references)):
         tokens_ref.append(tokenizer(references[i], language=languages[i]))
         tokens_hyp.append(tokenizer(hypotheses[i], language=languages[i]))

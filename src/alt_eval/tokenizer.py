@@ -20,11 +20,13 @@ PUNCT = "punctuation"
 LINE = "line_break"
 SECT = "section_break"
 PAREN = "parenthesis"
+BACKING = "backing"
 
 
 def to_rich_tokens(tokens: list[str]) -> list[Token]:
     """Convert a list of plain (string) tokens to a list of rich tokens."""
     result: list[Token] = []
+    backing = False
     for token in tokens:
         rich_token = Token(text=token)
         result.append(rich_token)
@@ -32,6 +34,8 @@ def to_rich_tokens(tokens: list[str]) -> list[Token]:
         # Tag as word / punctuation / line break
         if re.search(r"\w", token):
             rich_token.tags.add(WORD)
+            if backing:
+                rich_token.tags.add(BACKING)
         elif token == "\n":
             rich_token.text = "<L>"
             rich_token.tags.add(LINE)
@@ -41,6 +45,10 @@ def to_rich_tokens(tokens: list[str]) -> list[Token]:
             rich_token.tags.add(SECT)
         elif token in "()":
             rich_token.tags.add(PAREN)
+            if token == "(" and not backing:
+                backing = True
+            if token == ")" and backing:
+                backing = False
         else:
             rich_token.tags.add(PUNCT)
             if rich_token.text == "@-@":
