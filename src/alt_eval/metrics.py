@@ -14,6 +14,7 @@ from .tokenizer import (
     PUNCT,
     SECT,
     BACKING,
+    NONLEXICAL,
     LyricsTokenizer,
     Token,
     tokens_as_words,
@@ -107,6 +108,8 @@ def process_alignments(
                 for token_ref, _token_hyp in zip(chunk_ref, chunk_hyp):
                     if BACKING in token_ref.tags:
                         error_counts["del_backing"] += 1
+                    if NONLEXICAL in token_ref.tags:
+                        error_counts["del_nonlexical"] += 1
 
     return edit_counts, error_counts
 
@@ -184,7 +187,8 @@ def compute_word_metrics(
         "ER_case": error_counts["case"] / total_len,
         "WER_case": wo.wer + error_counts["case"] / total_len,
         "total_len": total_len,
-        "deletions_backing": error_counts["del_backing"] 
+        "deletions_backing": error_counts["del_backing"],
+        "deletions_nonlexical": error_counts["del_nonlexical"] 
     }
     return results, wo
 
