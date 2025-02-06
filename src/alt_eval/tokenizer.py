@@ -21,16 +21,23 @@ LINE = "line_break"
 SECT = "section_break"
 PAREN = "parenthesis"
 BACKING = "backing"
+NONLEXICAL = "nonlexical"
 
 
 def to_rich_tokens(tokens: list[str]) -> list[Token]:
     """Convert a list of plain (string) tokens to a list of rich tokens."""
     result: list[Token] = []
     backing = False
+    nonlexical = False
     for token in tokens:
         rich_token = Token(text=token)
-        result.append(rich_token)
-
+        if token != "@@NL@@":
+            result.append(rich_token)
+        else:
+            nonlexical = not nonlexical
+            continue
+        if nonlexical:
+            rich_token.tags.add(NONLEXICAL)
         # Tag as word / punctuation / line break
         if re.search(r"\w", token):
             rich_token.tags.add(WORD)
@@ -200,7 +207,7 @@ class LyricsTokenizer:
             return_str=True,
             escape=False,
             aggressive_dash_splits=True,
-            protected_patterns=[r"\*+", r"@@apos@@"],
+            protected_patterns=[r"\*+", r"@@apos@@", r"@@NL@@"],
         )
 
         if remove_last:

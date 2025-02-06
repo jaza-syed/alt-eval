@@ -239,6 +239,8 @@ def compute_metrics(
         hypotheses: A list of hypotheses.
         languages: The language of each reference transcript or a single language to use for all
             transcripts.
+        include_other: Whether to compute non-word metrics
+        nonlexical_line_idxs: idxs of lines in the references that are nonlexical
 
     Returns:
         A dictionary of metrics.
