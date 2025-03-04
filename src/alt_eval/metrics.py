@@ -43,7 +43,9 @@ def process_alignment_chunk(
     """
     Count tag-specific edit operations in a chunk of an alignment.
     NOTE: counts is modified in place!
+    If a tag is ref-only, it will be counted in delete as normal
     """
+    ref_only_tags = {NONLEXICAL, BACKING}
     if chunk_type == "delete":
         assert len(hypothesis) == 0
         for token in reference:
@@ -57,16 +59,18 @@ def process_alignment_chunk(
     elif chunk_type in ["substitute", "equal"]:
         assert len(reference) == len(hypothesis)
         for token_ref, token_hyp in zip(reference, hypothesis):
-            common_tags = token_ref.tags & token_hyp.tags if count_substitutions else set()
+            # add {nonlexical, backing} to common_tags so that substitutions / hits are counted as normal
+            common_tags = (token_ref.tags & token_hyp.tags) if count_substitutions else set() 
+            ref_only_tags = {tag for tag in [NONLEXICAL, BACKING] if tag in token_ref.tags}
             for tag in token_ref.tags - common_tags:
                 counts[tag].D += 1
             for tag in token_hyp.tags - common_tags:
                 counts[tag].I += 1
             if chunk_type == "substitute":
-                for tag in common_tags:
+                for tag in common_tags | ref_only_tags:
                     counts[tag].S += 1
             elif chunk_type == "equal":
-                for tag in common_tags:
+                for tag in common_tags | ref_only_tags:
                     counts[tag].H += 1
     else:
         assert False, f"Unhandled chunk type: {chunk_type}"

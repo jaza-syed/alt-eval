@@ -31,10 +31,10 @@ def to_rich_tokens(tokens: list[str]) -> list[Token]:
     nonlexical = False
     for token in tokens:
         rich_token = Token(text=token)
-        if token != "@@NL@@":
+        if token not in ["<nl>", "</nl>", "@@NL@@"]:
             result.append(rich_token)
         else:
-            nonlexical = not nonlexical
+            nonlexical = not nonlexical if token == "@@NL@@" else token == "<nl>"
             continue
         if nonlexical:
             rich_token.tags.add(NONLEXICAL)
@@ -207,7 +207,7 @@ class LyricsTokenizer:
             return_str=True,
             escape=False,
             aggressive_dash_splits=True,
-            protected_patterns=[r"\*+", r"@@apos@@", r"@@NL@@"],
+            protected_patterns=[r"\*+", r"@@apos@@", r"@@NL@@", r"<nl>", r"</nl>"],
         )
 
         if remove_last:
