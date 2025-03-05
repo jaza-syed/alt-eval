@@ -50,6 +50,7 @@ def process_alignment_chunk(
         assert len(hypothesis) == 0
         for token in reference:
             for tag in token.tags:
+
                 counts[tag].D += 1
     elif chunk_type == "insert":
         assert len(reference) == 0
@@ -62,7 +63,9 @@ def process_alignment_chunk(
             # add {nonlexical, backing} to common_tags so that substitutions / hits are counted as normal
             common_tags = (token_ref.tags & token_hyp.tags) if count_substitutions else set() 
             ref_only_tags = {tag for tag in [NONLEXICAL, BACKING] if tag in token_ref.tags}
-            for tag in token_ref.tags - common_tags:
+            # NOTE: do not count tagged deletions here, as tags are not to indicate a special char
+            # But to indicate a type of word
+            for tag in token_ref.tags - (common_tags | ref_only_tags):
                 counts[tag].D += 1
             for tag in token_hyp.tags - common_tags:
                 counts[tag].I += 1

@@ -31,10 +31,10 @@ def to_rich_tokens(tokens: list[str]) -> list[Token]:
     nonlexical = False
     for token in tokens:
         rich_token = Token(text=token)
-        if token not in ["<nl>", "</nl>", "@@NL@@"]:
+        if token.lower() not in ["<nl>", "</nl>"]:
             result.append(rich_token)
         else:
-            nonlexical = not nonlexical if token == "@@NL@@" else token == "<nl>"
+            nonlexical = token.lower() == "<nl>"
             continue
         if nonlexical:
             rich_token.tags.add(NONLEXICAL)
@@ -111,7 +111,7 @@ class LyricsTokenizer:
         self._tokenizers: dict[str, MosesTokenizer] = {}
         self._punct_normalizers: dict[str, MosesPunctNormalizer] = {}
 
-        self._non_text_re = re.compile(r"[^\w\s\n\p{P}]")
+        self._non_text_re = re.compile(r"[^\w\s\n\p{P}<>]")
         self._empty_line_re = re.compile(r"\n[^\S\n]+\n")
         self._newlines_re = re.compile(r"(\n+)")
         self._word_boundary_apos_re = re.compile(r"\b'\B|\B'\b")
@@ -207,7 +207,7 @@ class LyricsTokenizer:
             return_str=True,
             escape=False,
             aggressive_dash_splits=True,
-            protected_patterns=[r"\*+", r"@@apos@@", r"@@NL@@", r"<nl>", r"</nl>"],
+            protected_patterns=[r"\*+", r"@@apos@@", r"@@NL@@", r"<nl>", r"</nl>", r"<Nl>", r"</Nl>"],
         )
 
         if remove_last:
